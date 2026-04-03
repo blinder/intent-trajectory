@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Intent Trajectory Visualization</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #fff; color: #1a1a1a; margin: 0; padding: 24px; }
+  @media (prefers-color-scheme: dark) { body { background: #1a1a1a; color: #e8e8e8; } }
+
+  .viz-root { max-width: 860px; margin: 0 auto; }
+  .viz-title { font-size: 18px; font-weight: 500; margin-bottom: 4px; }
+  .viz-subtitle { font-size: 13px; color: #888; margin-bottom: 24px; }
+
+  .viz-controls { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+  .viz-controls label { font-size: 13px; color: #888; }
+  .step-btns { display: flex; gap: 8px; }
+  .step-btn { font-size: 13px; padding: 6px 14px; cursor: pointer; border-radius: 8px; border: 0.5px solid #ccc; background: transparent; color: inherit; }
+  .step-btn:hover { background: rgba(0,0,0,0.06); }
+  .step-btn.active { background: rgba(0,0,0,0.08); border-color: #999; font-weight: 500; }
+  @media (prefers-color-scheme: dark) {
+    .step-btn { border-color: #444; }
+    .step-btn:hover { background: rgba(255,255,255,0.08); }
+    .step-btn.active { background: rgba(255,255,255,0.1); border-color: #888; }
+  }
+
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  @media (max-width: 600px) { .panels { grid-template-columns: 1fr; } }
+  .panel { border: 0.5px solid #e0e0e0; border-radius: 12px; padding: 12px; background: #fff; }
+  @media (prefers-color-scheme: dark) { .panel { border-color: #333; background: #242424; } }
+  .panel-title { font-size: 12px; font-weight: 500; color: #888; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .panel canvas { display: block; width: 100%; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; font-size: 12px; color: #888; }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .legend-line { width: 18px; height: 2px; flex-shrink: 0; }
+
+  .metric-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+  .metric { background: #f5f5f5; border-radius: 8px; padding: 12px; }
+  @media (prefers-color-scheme: dark) { .metric { background: #2a2a2a; } }
+  .metric-label { font-size: 12px; color: #888; margin-bottom: 4px; }
+  .metric-value { font-size: 22px; font-weight: 500; }
+  .metric-delta { font-size: 12px; margin-top: 2px; }
+  .delta-pos { color: #1D9E75; }
+
+  .chart-section { border: 0.5px solid #e0e0e0; border-radius: 12px; padding: 16px; background: #fff; }
+  @media (prefers-color-scheme: dark) { .chart-section { border-color: #333; background: #242424; } }
+  .chart-title { font-size: 13px; font-weight: 500; margin-bottom: 12px; }
+
+  .chart-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; font-size: 12px; color: #888; }
+  .cl-item { display: flex; align-items: center; gap: 6px; }
+  .cl-swatch { width: 18px; height: 2px; }
+  .cl-swatch.dashed { background: repeating-linear-gradient(to right, #888780 0, #888780 4px, transparent 4px, transparent 7px); }
+
+  .step-label { font-size: 13px; color: #666; margin-bottom: 20px; min-height: 20px; }
+  @media (prefers-color-scheme: dark) { .step-label { color: #aaa; } }
+</style>
+</head>
+<body>
+<div class="viz-root">
+
+  <div class="viz-title">Intent Trajectory: Before &amp; After</div>
+  <div class="viz-subtitle">How reasoning momentum shapes retrieval across a query session</div>
+
+  <div class="viz-controls">
+    <label>Query step:</label>
+    <div class="step-btns">
+      <button class="step-btn active" onclick="setStep(1)">Q1</button>
+      <button class="step-btn" onclick="setStep(2)">Q2</button>
+      <button class="step-btn" onclick="setStep(3)">Q3</button>
+      <button class="step-btn" onclick="setStep(4)">Q4</button>
+      <button class="step-btn" onclick="setStep(5)">Q5</button>
+    </div>
+    <button class="step-btn" onclick="autoPlay()" id="play-btn">&#9654; Play</button>
+  </div>
+
+  <div class="panels">
+    <div class="panel">
+      <div class="panel-title">Without trajectory</div>
+      <canvas id="canvasA" height="240"></canvas>
+    </div>
+    <div class="panel">
+      <div class="panel-title">With trajectory</div>
+      <canvas id="canvasB" height="240"></canvas>
+    </div>
+  </div>
+
+  <div class="step-label" id="step-label">Q1: "Tell me about Meridian Health's recent funding rounds"</div>
+
+  <div class="legend">
+    <span class="legend-item"><span class="legend-dot" style="background:#378ADD"></span>current query</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#888780"></span>past queries</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#378ADD; opacity:0.5; width:8px; height:8px;"></span>retrieved results</span>
+    <span class="legend-item"><span class="legend-line" style="background:#D85A30;"></span>trajectory vector</span>
+    <span class="legend-item"><span class="legend-line" style="border-top: 2px dashed #1D9E75; height:0;"></span>blended direction</span>
+  </div>
+
+  <div class="metric-row">
+    <div class="metric">
+      <div class="metric-label">Trajectory coherence</div>
+      <div class="metric-value" id="m-coherence">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Trajectory influence (β)</div>
+      <div class="metric-value" id="m-beta">0.00</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Result set alignment</div>
+      <div class="metric-value" id="m-alignment">—</div>
+      <div class="metric-delta" id="m-delta"></div>
+    </div>
+  </div>
+
+  <div class="chart-section">
+    <div class="chart-title">Coherence and result alignment over session</div>
+    <div class="chart-legend">
+      <span class="cl-item"><span class="cl-swatch" style="background:#D85A30;"></span>Coherence</span>
+      <span class="cl-item"><span class="cl-swatch dashed"></span>Alignment (no trajectory)</span>
+      <span class="cl-item"><span class="cl-swatch" style="background:#1D9E75;"></span>Alignment (with trajectory)</span>
+    </div>
+    <div style="position: relative; width: 100%; height: 180px;">
+      <canvas id="lineChart"></canvas>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const QUERIES = [
+  "Tell me about Meridian Health's recent funding rounds",
+  "Who are Meridian Health's key executives and leadership team?",
+  "What technology stack and infrastructure does Meridian Health use?",
+  "Who are Meridian Health's main competitors in digital health?",
+  "What is Meridian Health's go-to-market and sales strategy?"
+];
+
+const QUERY_POINTS = [
+  {x: 0.35, y: 0.62},
+  {x: 0.42, y: 0.68},
+  {x: 0.48, y: 0.71},
+  {x: 0.55, y: 0.67},
+  {x: 0.58, y: 0.73},
+];
+
+const RESULTS_NO_TRAJ = [
+  [{x:0.30,y:0.70},{x:0.22,y:0.55},{x:0.40,y:0.52},{x:0.18,y:0.65},{x:0.38,y:0.75}],
+  [{x:0.50,y:0.60},{x:0.28,y:0.72},{x:0.44,y:0.76},{x:0.60,y:0.55},{x:0.35,y:0.58}],
+  [{x:0.55,y:0.65},{x:0.32,y:0.62},{x:0.50,y:0.78},{x:0.65,y:0.60},{x:0.40,y:0.60}],
+  [{x:0.60,y:0.72},{x:0.30,y:0.58},{x:0.55,y:0.58},{x:0.68,y:0.65},{x:0.45,y:0.55}],
+  [{x:0.62,y:0.68},{x:0.28,y:0.60},{x:0.58,y:0.60},{x:0.70,y:0.72},{x:0.48,y:0.58}],
+];
+
+const RESULTS_WITH_TRAJ = [
+  [{x:0.30,y:0.70},{x:0.22,y:0.55},{x:0.40,y:0.52},{x:0.18,y:0.65},{x:0.38,y:0.75}],
+  [{x:0.48,y:0.66},{x:0.38,y:0.72},{x:0.44,y:0.76},{x:0.52,y:0.62},{x:0.40,y:0.68}],
+  [{x:0.52,y:0.68},{x:0.44,y:0.72},{x:0.50,y:0.76},{x:0.56,y:0.66},{x:0.46,y:0.70}],
+  [{x:0.56,y:0.70},{x:0.50,y:0.68},{x:0.54,y:0.74},{x:0.60,y:0.68},{x:0.52,y:0.72}],
+  [{x:0.58,y:0.72},{x:0.54,y:0.70},{x:0.56,y:0.76},{x:0.62,y:0.70},{x:0.54,y:0.74}],
+];
+
+const TRAJ_VECTORS = [
+  null,
+  {ox:0.38,oy:0.65, tx:0.46,ty:0.70},
+  {ox:0.42,oy:0.67, tx:0.52,ty:0.73},
+  {ox:0.45,oy:0.68, tx:0.57,ty:0.74},
+  {ox:0.47,oy:0.69, tx:0.60,ty:0.76},
+];
+
+const COHERENCE  = [null, 0.31, 0.58, 0.74, 0.82];
+const BETA       = [0.00, 0.14, 0.26, 0.33, 0.37];
+const ALIGN_NO   = [0.41, 0.38, 0.36, 0.34, 0.33];
+const ALIGN_WITH = [0.41, 0.44, 0.52, 0.61, 0.68];
+
+let currentStep = 1;
+let playInterval = null;
+
+function w2c(W, H, x, y) {
+  const pad = 28;
+  return {
+    cx: pad + x * (W - pad*2),
+    cy: (H - pad) - y * (H - pad*2)
+  };
+}
+
+function drawScatter(canvasId, step, withTraj) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = 240 * dpr;
+  ctx.scale(dpr, dpr);
+  canvas.style.width = rect.width + 'px';
+  canvas.style.height = '240px';
+  const W = rect.width, H = 240;
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.strokeStyle = 'rgba(136,135,128,0.12)';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const gx = 28 + (i/4)*(W-56);
+    const gy = 12 + (i/4)*(H-40);
+    ctx.beginPath(); ctx.moveTo(gx, 12); ctx.lineTo(gx, H-28); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(28, gy); ctx.lineTo(W-28, gy); ctx.stroke();
+  }
+
+  ctx.fillStyle = 'rgba(136,135,128,0.55)';
+  ctx.font = '10px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('semantic dimension 1', W/2, H-6);
+  ctx.save(); ctx.translate(10, H/2); ctx.rotate(-Math.PI/2);
+  ctx.fillText('semantic dimension 2', 0, 0);
+  ctx.restore();
+
+  const results = withTraj ? RESULTS_WITH_TRAJ : RESULTS_NO_TRAJ;
+
+  if (withTraj && step >= 2 && TRAJ_VECTORS[step-1]) {
+    const tv = TRAJ_VECTORS[step-1];
+    const o = w2c(W, H, tv.ox, tv.oy);
+    const t = w2c(W, H, tv.tx, tv.ty);
+    ctx.strokeStyle = '#D85A30';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(o.cx, o.cy); ctx.lineTo(t.cx, t.cy); ctx.stroke();
+    const angle = Math.atan2(t.cy - o.cy, t.cx - o.cx);
+    ctx.fillStyle = '#D85A30';
+    ctx.beginPath();
+    ctx.moveTo(t.cx, t.cy);
+    ctx.lineTo(t.cx - 8*Math.cos(angle-0.4), t.cy - 8*Math.sin(angle-0.4));
+    ctx.lineTo(t.cx - 8*Math.cos(angle+0.4), t.cy - 8*Math.sin(angle+0.4));
+    ctx.closePath(); ctx.fill();
+  }
+
+  if (withTraj && step >= 2 && TRAJ_VECTORS[step-1]) {
+    const beta = BETA[step-1];
+    const tv = TRAJ_VECTORS[step-1];
+    const qc = w2c(W, H, QUERY_POINTS[step-1].x, QUERY_POINTS[step-1].y);
+    const blendX = QUERY_POINTS[step-1].x * (1-beta) + tv.tx * beta;
+    const blendY = QUERY_POINTS[step-1].y * (1-beta) + tv.ty * beta;
+    const bc = w2c(W, H, blendX, blendY);
+    ctx.strokeStyle = '#1D9E75';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(qc.cx, qc.cy);
+    ctx.lineTo(bc.cx + (bc.cx - qc.cx)*1.5, bc.cy + (bc.cy - qc.cy)*1.5);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  for (let i = 0; i < step-1; i++) {
+    const p = w2c(W, H, QUERY_POINTS[i].x, QUERY_POINTS[i].y);
+    ctx.fillStyle = 'rgba(136,135,128,0.45)';
+    ctx.beginPath(); ctx.arc(p.cx, p.cy, 5, 0, Math.PI*2); ctx.fill();
+  }
+
+  for (let s = 0; s < step; s++) {
+    const isCurrent = s === step-1;
+    results[s].forEach(r => {
+      const p = w2c(W, H, r.x, r.y);
+      ctx.globalAlpha = isCurrent ? 0.7 : 0.25;
+      ctx.fillStyle = isCurrent ? '#378ADD' : '#888780';
+      ctx.beginPath(); ctx.arc(p.cx, p.cy, isCurrent ? 5 : 3.5, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  const qp = w2c(W, H, QUERY_POINTS[step-1].x, QUERY_POINTS[step-1].y);
+  ctx.fillStyle = '#378ADD';
+  ctx.beginPath(); ctx.arc(qp.cx, qp.cy, 8, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = 'rgba(55,138,221,0.3)';
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(qp.cx, qp.cy, 12, 0, Math.PI*2); ctx.stroke();
+  ctx.lineWidth = 1;
+  ctx.fillStyle = '#378ADD';
+  ctx.font = '500 11px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Q' + step, qp.cx, qp.cy - 16);
+}
+
+let lineChart = null;
+
+function buildLineChart(step) {
+  const ctx = document.getElementById('lineChart');
+  if (!ctx) return;
+  const labels = ['Q1','Q2','Q3','Q4','Q5'];
+  if (lineChart) { lineChart.destroy(); }
+  lineChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Coherence',
+          data: COHERENCE.map((v,i) => i < step ? v : null),
+          borderColor: '#D85A30',
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          pointRadius: 3,
+          pointBackgroundColor: '#D85A30',
+          tension: 0.35,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Alignment (no trajectory)',
+          data: ALIGN_NO.map((v,i) => i < step ? v : null),
+          borderColor: '#888780',
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          borderDash: [4,3],
+          pointRadius: 3,
+          pointBackgroundColor: '#888780',
+          tension: 0.35,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Alignment (with trajectory)',
+          data: ALIGN_WITH.map((v,i) => i < step ? v : null),
+          borderColor: '#1D9E75',
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          pointRadius: 3,
+          pointBackgroundColor: '#1D9E75',
+          tension: 0.35,
+          yAxisID: 'y',
+        },
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: c => c.dataset.label + ': ' + (c.parsed.y != null ? c.parsed.y.toFixed(2) : 'n/a')
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(136,135,128,0.12)' },
+          ticks: { color: '#888780', font: { size: 12 } },
+          border: { display: false }
+        },
+        y: {
+          min: 0, max: 1,
+          grid: { color: 'rgba(136,135,128,0.12)' },
+          ticks: { color: '#888780', font: { size: 12 }, stepSize: 0.2 },
+          border: { display: false }
+        }
+      }
+    }
+  });
+}
+
+function updateMetrics(step) {
+  const coh = COHERENCE[step-1];
+  document.getElementById('m-coherence').textContent = coh != null ? coh.toFixed(2) : '—';
+  document.getElementById('m-beta').textContent = BETA[step-1].toFixed(2);
+  document.getElementById('m-alignment').textContent = ALIGN_WITH[step-1].toFixed(2);
+  const el = document.getElementById('m-delta');
+  if (step > 1) {
+    const delta = ((ALIGN_WITH[step-1] - ALIGN_NO[step-1]) / ALIGN_NO[step-1] * 100);
+    el.textContent = '+' + delta.toFixed(0) + '% vs. no trajectory';
+    el.className = 'metric-delta delta-pos';
+  } else {
+    el.textContent = 'no trajectory yet';
+    el.className = 'metric-delta';
+  }
+}
+
+function setStep(s) {
+  currentStep = s;
+  document.querySelectorAll('.step-btn').forEach((b, i) => {
+    if (i < 5) b.classList.toggle('active', i === s-1);
+  });
+  document.getElementById('step-label').textContent = 'Q' + s + ': "' + QUERIES[s-1] + '"';
+  drawScatter('canvasA', s, false);
+  drawScatter('canvasB', s, true);
+  buildLineChart(s);
+  updateMetrics(s);
+}
+
+function autoPlay() {
+  if (playInterval) {
+    clearInterval(playInterval);
+    playInterval = null;
+    document.getElementById('play-btn').textContent = '&#9654; Play';
+    return;
+  }
+  document.getElementById('play-btn').textContent = '&#9646;&#9646; Stop';
+  let s = 1;
+  setStep(s);
+  playInterval = setInterval(() => {
+    s = s < 5 ? s + 1 : 1;
+    setStep(s);
+    if (s === 5) {
+      clearInterval(playInterval);
+      playInterval = null;
+      document.getElementById('play-btn').textContent = '&#9654; Play';
+    }
+  }, 1400);
+}
+
+window.addEventListener('resize', () => {
+  drawScatter('canvasA', currentStep, false);
+  drawScatter('canvasB', currentStep, true);
+});
+
+window.addEventListener('load', () => { setStep(1); });
+</script>
+</body>
+</html>
